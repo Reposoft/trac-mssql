@@ -32,6 +32,7 @@ re_where = re.compile("WHERE ", re.IGNORECASE)
 re_equal = re.compile("(\w+)\s*=\s*(['\w]+|\?)", re.IGNORECASE)
 re_isnull = re.compile("(\w+) IS NULL", re.IGNORECASE)
 re_select = re.compile('SELECT( DISTINCT)?( TOP)?', re.IGNORECASE)
+re_coalesce_equal = re.compile("(COALESCE\([^)]+\))=([^,]+)", re.IGNORECASE)
 
 
 def _to_sql(table):
@@ -158,6 +159,9 @@ class SQLServerCursor(object):
         if match:
             end = match.end()
             for match in reversed([match for match in re_equal.finditer(sql[end:])]):
+                replacement = "CASE %s WHEN %s THEN '0' ELSE '1' END" % (match.group(1), match.group(2))
+                sql = sql[:end + match.start()] + replacement + sql[end + match.end():]
+            for match in reversed([match for match in re_coalesce_equal.finditer(sql[end:])]):
                 replacement = "CASE %s WHEN %s THEN '0' ELSE '1' END" % (match.group(1), match.group(2))
                 sql = sql[:end + match.start()] + replacement + sql[end + match.end():]
 

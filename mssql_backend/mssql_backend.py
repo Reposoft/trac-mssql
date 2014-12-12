@@ -76,6 +76,13 @@ class MSSQLConnector(Component):
 				cursor.execute(stmt)
 		cnx.commit()
 
+	def get_connection(self, path, log=None, user=None, password=None,
+					   host=None, port=None, params={}):
+		cnx = MSSQLConnection(path, log, user, password, host, port, params)
+		return cnx
+
+
+
 
 def _to_sql(table):
     sql = ["CREATE TABLE %s (" % table.name]

@@ -7,9 +7,12 @@
 # This software is licensed as described in the file COPYING, which
 # you should have received as part of this distribution.
 
+from trac.core import *
+from trac.config import Option
 from trac.core import Component, implements
 from trac.db.api import IDatabaseConnector
 from trac.db.util import ConnectionWrapper
+from trac.env import IEnvironmentSetupParticipant, ISystemInfoProvider
 from trac.env import BackupError
 import re
 
@@ -41,6 +44,25 @@ re_isnull = re.compile("(\w+) IS NULL", re.IGNORECASE)
 re_select = re.compile('SELECT( DISTINCT)?( TOP)?', re.IGNORECASE)
 re_coalesce_equal = re.compile("(COALESCE\([^)]+\))=([^,]+)", re.IGNORECASE)
 
+class MSSQLConnector(Component):
+	implements(IDatabaseConnector, IEnvironmentSetupParticipant,
+			   ISystemInfoProvider)
+
+	required = False
+
+	def __init__(self):
+		self._mssql_version = None
+
+	# ISystemInfoProvider methods
+
+	def get_system_info(self):
+		if self.required:
+			yield 'pymssql', self._mssql_version
+
+	# IDatabaseConnector methods
+
+	def get_supported_schemes(self):
+		yield ('mssql', 1)
 
 def _to_sql(table):
     sql = ["CREATE TABLE %s (" % table.name]

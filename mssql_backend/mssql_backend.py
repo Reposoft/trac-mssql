@@ -312,7 +312,10 @@ class SQLServerCursor(object):
             if self.log:  # See [trac] debug_sql in trac.ini
                 self.log.debug(sql)
                 self.log.debug(args)
-            self.cursor.execute(sql, args or [])
+                if args:
+			self.cursor.execute(sql, tuple(args))
+		else:
+			self.cursor.execute(sql, ())
         except:
             self.cnx.rollback()
             raise

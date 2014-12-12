@@ -64,6 +64,19 @@ class MSSQLConnector(Component):
 	def get_supported_schemes(self):
 		yield ('mssql', 1)
 
+	def init_db(self, path, schema=None, log=None, user=None, password=None,
+				host=None, port=None, params={}):
+		cnx = self.get_connection(path, log, user, password, host, port,
+								  params)
+		cursor = cnx.cursor()
+		if schema is None:
+			from trac.db_default import schema
+		for table in schema:
+			for stmt in self.to_sql(table):
+				cursor.execute(stmt)
+		cnx.commit()
+
+
 def _to_sql(table):
     sql = ["CREATE TABLE %s (" % table.name]
     coldefs = []

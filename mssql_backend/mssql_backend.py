@@ -89,6 +89,17 @@ class MSSQLConnector(Component):
 		cnx = MSSQLConnection(path, log, user, password, host, port, params)
 		return cnx
 
+	# IEnvironmentSetupParticipant methods
+
+	def environment_created(self):
+		pass
+
+	def environment_needs_upgrade(self):
+		return False
+
+	def upgrade_environment(self):
+		pass
+
 
 class MSSQLConnection(ConnectionBase, ConnectionWrapper):
 	"""Connection wrapper for MSSQL."""

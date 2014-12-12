@@ -11,7 +11,8 @@ from trac.core import *
 from trac.config import Option
 from trac.core import Component, implements
 from trac.db.api import IDatabaseConnector
-from trac.db.util import ConnectionWrapper
+from trac.db.api import ConnectionBase 
+from trac.db.util import ConnectionWrapper, IterableCursor
 from trac.env import IEnvironmentSetupParticipant, ISystemInfoProvider
 from trac.env import BackupError
 import re
@@ -81,6 +82,41 @@ class MSSQLConnector(Component):
 		cnx = MSSQLConnection(path, log, user, password, host, port, params)
 		return cnx
 
+
+class MSSQLConnection(ConnectionBase, ConnectionWrapper):
+	"""Connection wrapper for MSSQL."""
+
+	poolable = True
+
+	def __init__(self, path, log, user=None, password=None, host=None, port=None, params={}):
+		if path.startswith('/'):
+			path = path[1:]
+		if 'host' in params:
+			host = params['host']
+		cnx = pymssql.connect(database=path, user=user, password=password, host=host,
+							  port=port)
+		self.schema = path
+		conn = ConnectionWrapper.__init__(self, cnx, log)
+		self._is_closed = False
+
+	def cursor(self):
+		cursor = SQLServerCursor(self.cnx.cursor(), self.log)
+		cursor.cnx = self
+		return cursor
+
+	def rollback(self):
+		try:
+			self.cnx.rollback()
+		except pymssql.ProgrammingError:
+			self._is_closed = True
+
+	def close(self):
+		if not self._is_closed:
+			try:
+				self.cnx.close()
+			except pymssql.ProgrammingError:
+				pass # this error would mean it's already closed.  So, ignore
+			self._is_closed = True
 
 
 

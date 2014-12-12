@@ -80,7 +80,7 @@ class MSSQLConnector(Component):
 		if schema is None:
 			from trac.db_default import schema
 		for table in schema:
-			for stmt in self.to_sql(table):
+			for stmt in _to_sql(table):
 				cursor.execute(stmt)
 		cnx.commit()
 
@@ -246,7 +246,7 @@ class SQLServerCursor(object):
 
     def execute(self, sql, args=None):
         if args:
-            sql = sql % (('?',) * len(args))
+            sql = sql % (('%s',) * len(args))
 
         # replace __column__ IS NULL -> COALESCE(__column__, '') after ORDER BY
         match = re_order_by.search(sql)
@@ -309,7 +309,7 @@ class SQLServerCursor(object):
     def executemany(self, sql, args):
         if not args:
             return
-        sql = sql % (('?',) * len(args[0]))
+        sql = sql % (('%s',) * len(args[0]))
         try:
             if self.log:  # See [trac] debug_sql in trac.ini
                 self.log.debug(sql)

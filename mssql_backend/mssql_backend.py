@@ -21,10 +21,12 @@ from trac.env import BackupError
 from trac.db import Table, Column
 import re
 
+
 try:
-    import pyodbc
+	import pymssql as pymssql
+	has_mssql = True
 except ImportError:
-    pyodbc = None
+	has_mssql = False
 
 # force enables this plugin in trac-admin initenv
 #enabled = BoolOption("components", "mssql_backend.*", "enabled")
@@ -69,10 +71,11 @@ class MSSQLConnector(Component):
 	def get_supported_schemes(self):
 		yield ('mssql', 1)
 
-	def init_db(self, path, schema=None, log=None, user=None, password=None,
+	def init_db(self, path, schema=None, log=None, user=None, password=None,\
 				host=None, port=None, params={}):
-		cnx = self.get_connection(path, log, user, password, host, port,
-								  params)
+		print "User: %s" % str(user)
+		print "Password: %s" % str(password)
+		cnx = self.get_connection(path, log, user, password, host, port, params)
 		cursor = cnx.cursor()
 		if schema is None:
 			from trac.db_default import schema
@@ -97,8 +100,7 @@ class MSSQLConnection(ConnectionBase, ConnectionWrapper):
 			path = path[1:]
 		if 'host' in params:
 			host = params['host']
-		cnx = pymssql.connect(database=path, user=user, password=password, host=host,
-							  port=port)
+		cnx = pymssql.connect(database=path, user=user, password=password, host=host, port=port)
 		self.schema = path
 		conn = ConnectionWrapper.__init__(self, cnx, log)
 		self._is_closed = False
@@ -317,40 +319,3 @@ class SQLServerCursor(object):
             self.cnx.rollback()
             raise
 
-
-class SQLServerConnector(Component):
-    """Database connector for Microsoft SQL Server.
-
-    Database URLs should be of the form:
-    {{{
-    odbc:/DSN=__Data Source Name__
-    }}}
-    """
-    implements(IDatabaseConnector)
-
-    def get_supported_schemes(self):
-        if pyodbc:
-            yield ('odbc', 3)
-
-    def get_connection(self, path, log=None, params={}):
-        return OdbcConnection(path[1:], log, params)
-
-    def get_exceptions(self):
-        return pyodbc  # Todo: pending
-
-    def init_db(self, path, schema=None, log=None, params={}):
-        cnx = self.get_connection(path, log)
-        cursor = cnx.cursor()
-        if schema is None:
-            from trac.db_default import schema
-        for table in schema:
-            for stmt in self.to_sql(table):
-                self.env.log.debug(stmt)
-                cursor.execute(stmt)
-        cnx.commit()
-
-    def to_sql(self, table):
-        return _to_sql(table)
-
-    def backup(self, dest_file):
-        raise BackupError("Backup Not Implemented. you can use --no-backup option in environment upgrade.")

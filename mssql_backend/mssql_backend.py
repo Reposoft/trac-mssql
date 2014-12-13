@@ -182,7 +182,7 @@ class MSSQLConnection(ConnectionBase, ConnectionWrapper):
 		return self.like_escape(prefix) + '%'
 
 	def quote(self, identifier):
-		return "`%s`" % identifier.replace('`', '``')
+		return '"%s"' % identifier
 
 	def update_sequence(self, cursor, table, column='id'):
 		# MSSQL handles sequence updates automagically

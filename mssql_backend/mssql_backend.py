@@ -73,8 +73,6 @@ class MSSQLConnector(Component):
 
 	def init_db(self, path, schema=None, log=None, user=None, password=None,\
 				host=None, port=None, params={}):
-		print "User: %s" % str(user)
-		print "Password: %s" % str(password)
 		cnx = self.get_connection(path, log, user, password, host, port, params)
 		cursor = cnx.cursor()
 		if schema is None:
@@ -100,6 +98,8 @@ class MSSQLConnector(Component):
 	def upgrade_environment(self):
 		pass
 
+	def get_exceptions(self):
+		return pymssql
 
 class MSSQLConnection(ConnectionBase, ConnectionWrapper):
 	"""Connection wrapper for MSSQL."""

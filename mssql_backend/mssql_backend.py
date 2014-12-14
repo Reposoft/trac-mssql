@@ -7,16 +7,26 @@
 # This software is licensed as described in the file COPYING, which
 # you should have received as part of this distribution.
 
+from trac.core import *
+from trac.config import Option
 from trac.core import Component, implements
+from trac.db.api import ConnectionBase
+from trac.db.api import DatabaseManager
 from trac.db.api import IDatabaseConnector
+from trac.db.api import _parse_db_str, get_column_names
+from trac.db.api import ConnectionBase 
 from trac.db.util import ConnectionWrapper
+from trac.env import IEnvironmentSetupParticipant, ISystemInfoProvider
 from trac.env import BackupError
+from trac.db import Table, Column
 import re
 
+
 try:
-    import pyodbc
+	import pymssql as pymssql
+	has_mssql = True
 except ImportError:
-    pyodbc = None
+	has_mssql = False
 
 # force enables this plugin in trac-admin initenv
 #enabled = BoolOption("components", "mssql_backend.*", "enabled")
@@ -40,6 +50,144 @@ re_equal = re.compile("(\w+)\s*=\s*(['\w]+|\?)", re.IGNORECASE)
 re_isnull = re.compile("(\w+) IS NULL", re.IGNORECASE)
 re_select = re.compile('SELECT( DISTINCT)?( TOP)?', re.IGNORECASE)
 re_coalesce_equal = re.compile("(COALESCE\([^)]+\))=([^,]+)", re.IGNORECASE)
+
+class MSSQLConnector(Component):
+	implements(IDatabaseConnector, IEnvironmentSetupParticipant,
+			   ISystemInfoProvider)
+
+	required = False
+
+	def __init__(self):
+		self._mssql_version = None
+
+	# ISystemInfoProvider methods
+
+	def get_system_info(self):
+		if self.required:
+			yield 'pymssql', self._mssql_version
+
+	# IDatabaseConnector methods
+
+	def get_supported_schemes(self):
+		yield ('mssql', 1)
+
+	def init_db(self, path, schema=None, log=None, user=None, password=None,\
+				host=None, port=None, params={}):
+		cnx = self.get_connection(path, log, user, password, host, port, params)
+		cursor = cnx.cursor()
+		if schema is None:
+			from trac.db_default import schema
+		for table in schema:
+			for stmt in _to_sql(table):
+				cursor.execute(stmt)
+		cnx.commit()
+
+	def get_connection(self, path, log=None, user=None, password=None,
+					   host=None, port=None, params={}):
+		cnx = MSSQLConnection(path, log, user, password, host, port, params)
+		return cnx
+
+	# IEnvironmentSetupParticipant methods
+
+	def environment_created(self):
+		pass
+
+	def environment_needs_upgrade(self):
+		return False
+
+	def upgrade_environment(self):
+		pass
+
+	def get_exceptions(self):
+		return pymssql
+
+class MSSQLConnection(ConnectionBase, ConnectionWrapper):
+	"""Connection wrapper for MSSQL."""
+
+	poolable = True
+
+	def __init__(self, path, log, user=None, password=None, host=None, port=None, params={}):
+		if path.startswith('/'):
+			path = path[1:]
+		if 'host' in params:
+			host = params['host']
+		cnx = pymssql.connect(database=path, user=user, password=password, host=host, port=port)
+		self.schema = path
+		conn = ConnectionWrapper.__init__(self, cnx, log)
+		self._is_closed = False
+
+	def cursor(self):
+		cursor = SQLServerCursor(self.cnx.cursor(), self.log)
+		cursor.cnx = self
+		return cursor
+
+	def rollback(self):
+		try:
+			self.cnx.rollback()
+		except pymssql.ProgrammingError:
+			self._is_closed = True
+
+	def close(self):
+		if not self._is_closed:
+			try:
+				self.cnx.close()
+			except pymssql.ProgrammingError:
+				pass # this error would mean it's already closed.  So, ignore
+			self._is_closed = True
+
+
+	def cast(self, column, type):
+		if type == 'signed':
+			type = 'int'
+		elif type == 'text':
+			type = 'varchar(max)'
+		return 'CAST(%s AS %s)' % (column, type)
+
+	def concat(self, *args):
+		return 'concat(%s)' % ', '.join(args)
+
+	def drop_table(self, table):
+		cursor = pymssql.cursors.Cursor(self.cnx)
+		cursor._defer_warnings = True  # ignore "Warning: Unknown table ..."
+		cursor.execute("DROP TABLE IF EXISTS " + self.quote(table))
+
+	def get_column_names(self, table):
+		rows = self.execute("""
+			SELECT column_name FROM information_schema.columns
+			WHERE table_schema=%s AND table_name=%s
+			""", (self.schema, table))
+		return [row[0] for row in rows]
+
+	def get_last_id(self, cursor, table, column='id'):
+		return cursor.lastrowid
+
+	def get_table_names(self):
+		rows = self.execute("""
+			SELECT table_name FROM information_schema.tables
+			WHERE table_schema=%s""", (self.schema,))
+		return [row[0] for row in rows]
+
+	def like(self):
+		return 'LIKE %s'
+		# TODO quick hacked. check me.
+
+	def like_escape(self, text):
+		return text
+		# TODO quick hacked. check me.
+
+	def prefix_match(self):
+		return "LIKE %s ESCAPE '/'"
+
+	def prefix_match_value(self, prefix):
+		return self.like_escape(prefix) + '%'
+
+	def quote(self, identifier):
+		return '"%s"' % identifier
+
+	def update_sequence(self, cursor, table, column='id'):
+		# MSSQL handles sequence updates automagically
+		pass
+
 
 
 def _to_sql(table):
@@ -91,48 +239,6 @@ def _to_sql(table):
               '_'.join(index.columns), table.name, ','.join(index.columns))
 
 
-class OdbcConnection(ConnectionWrapper):
-    poolable = True
-#    { "connect",            (PyCFunction)mod_connect,            METH_VARARGS|METH_KEYWORDS, connect_doc },
-#    { "TimeFromTicks",      (PyCFunction)mod_timefromticks,      METH_VARARGS,               timefromticks_doc },
-#    { "DateFromTicks",      (PyCFunction)mod_datefromticks,      METH_VARARGS,               datefromticks_doc },
-#    { "TimestampFromTicks", (PyCFunction)mod_timestampfromticks, METH_VARARGS,               timestampfromticks_doc },
-#    { "dataSources",        (PyCFunction)mod_datasources,        METH_NOARGS,                datasources_doc },
-
-    def __init__(self, path, log=None, params={}):
-        cnx = pyodbc.connect(path)
-        ConnectionWrapper.__init__(self, cnx, log)
-
-    def cast(self, column, type):  # @ReservedAssignment
-        return column
-
-    def concat(self, *args):
-        return '+'.join(args)
-
-    def like(self):
-        return 'LIKE %s'
-        # TODO quick hacked. check me.
-
-    def like_escape(self, text):
-        return text
-        # TODO quick hacked. check me.
-
-    def cursor(self):
-        cursor = SQLServerCursor(self.cnx.cursor(), self.log)
-        cursor.cnx = self
-        return cursor
-        # return IterableCursor(cursor, self.log)
-
-    def get_last_id(self, cursor, table, column='id'):
-        cursor.execute("""SELECT MAX(%s) from %s""" % (column, table))
-        return cursor.fetchone()[0]
-
-    def quote(self, identifier):
-        """Return the quoted identifier."""
-#        return "'%s'" % identifier.replace("'", "''")
-        return identifier
-
-
 class SQLServerCursor(object):
 
     def __init__(self, cursor, log=None):
@@ -151,7 +257,7 @@ class SQLServerCursor(object):
 
     def execute(self, sql, args=None):
         if args:
-            sql = sql % (('?',) * len(args))
+            sql = sql % (('%s',) * len(args))
 
         # replace __column__ IS NULL -> COALESCE(__column__, '') after ORDER BY
         match = re_order_by.search(sql)
@@ -206,7 +312,10 @@ class SQLServerCursor(object):
             if self.log:  # See [trac] debug_sql in trac.ini
                 self.log.debug(sql)
                 self.log.debug(args)
-            self.cursor.execute(sql, args or [])
+                if args:
+			self.cursor.execute(sql, tuple(args))
+		else:
+			self.cursor.execute(sql, ())
         except:
             self.cnx.rollback()
             raise
@@ -214,7 +323,7 @@ class SQLServerCursor(object):
     def executemany(self, sql, args):
         if not args:
             return
-        sql = sql % (('?',) * len(args[0]))
+        sql = sql % (('%s',) * len(args[0]))
         try:
             if self.log:  # See [trac] debug_sql in trac.ini
                 self.log.debug(sql)
@@ -224,40 +333,3 @@ class SQLServerCursor(object):
             self.cnx.rollback()
             raise
 
-
-class SQLServerConnector(Component):
-    """Database connector for Microsoft SQL Server.
-
-    Database URLs should be of the form:
-    {{{
-    odbc:/DSN=__Data Source Name__
-    }}}
-    """
-    implements(IDatabaseConnector)
-
-    def get_supported_schemes(self):
-        if pyodbc:
-            yield ('odbc', 3)
-
-    def get_connection(self, path, log=None, params={}):
-        return OdbcConnection(path[1:], log, params)
-
-    def get_exceptions(self):
-        return pyodbc  # Todo: pending
-
-    def init_db(self, path, schema=None, log=None, params={}):
-        cnx = self.get_connection(path, log)
-        cursor = cnx.cursor()
-        if schema is None:
-            from trac.db_default import schema
-        for table in schema:
-            for stmt in self.to_sql(table):
-                self.env.log.debug(stmt)
-                cursor.execute(stmt)
-        cnx.commit()
-
-    def to_sql(self, table):
-        return _to_sql(table)
-
-    def backup(self, dest_file):
-        raise BackupError("Backup Not Implemented. you can use --no-backup option in environment upgrade.")

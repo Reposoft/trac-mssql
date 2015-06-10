@@ -45,6 +45,7 @@ _column_map = {
 
 re_limit = re.compile(" LIMIT (\d+)( OFFSET (\d+))?", re.IGNORECASE)
 re_order_by = re.compile("ORDER BY ", re.IGNORECASE)
+re_order_by_capture = re.compile("ORDER BY ([^,]*)", re.IGNORECASE)
 re_where = re.compile("WHERE ", re.IGNORECASE)
 re_equal = re.compile("(\w+)\s*=\s*(['\w]+|\?)", re.IGNORECASE)
 re_isnull = re.compile("(\w+) IS NULL", re.IGNORECASE)
@@ -287,10 +288,15 @@ class SQLServerCursor(object):
 				column_name = match.group(1)
 				re_columns = re.compile("([a-z]+.)?%s,?" % column_name)
 				order_by = ' '.join([column for column in match.string.split(' ') if not re_columns.match(column)])
-				self.log.debug(order_by)
 				sql = sql[:end] + order_by
 
+		
+		# Let's see if there a troublesome LIMIT OFFSET combo.
+                #match = re_where.search(sql)
+		#if match:
 		# transform LIMIT clause
+		if self.log:
+			self.log.debug("SQL before limit rewrite: %s" % sql)
 		match = re_limit.search(sql)
 		if match:
 			limit = match.group(1)
@@ -299,15 +305,36 @@ class SQLServerCursor(object):
 				# LIMIT n (without OFFSET) -> SELECT TOP n
 				sql = match.string[:match.start()].replace("SELECT", "SELECT TOP %s" % limit)
 			else:
-				# LIMIT n OFFSET m -> OFFSET m ROWS FETCH NEXT n ROWS ONLY
-				sql = match.string[:match.start()] + " OFFSET %s ROWS FETCH NEXT %s ROWS ONLY" % (offset, limit)
-#                match = re_where.search(sql)
-#                sql = match.string[:match.end()] + 'ROW_NUMBER() > %s, ' % limit + match.string[match.end():]
-		# avoid error in "order by" in sub query
-		# TODO: decide count of lines
+                                # Fetch LIMIT and OFFSET numbers
+				limit_match = re.compile("LIMIT (\d+) OFFSET (\d+)").search(sql)
+				limit = int(limit_match.group(1))
+				offset = int(limit_match.group(2))
+                                # Drop the LIMIT and OFFSET parts
+				sql = sql[:limit_match.start()]
+
+                                # We need to extract the ORDER BY part
+				order_by = re.compile("ORDER BY CASE COALESCE.+").search(sql)
+				order_column = order_by.group(0) #order_by.group(1)
+				sql = sql[:order_by.start()] + sql[(order_by.end()+1):]
+
+                                # Now we need to splice in a new field with new "id" based on the sorted order
+				query_parts = sql.split("FROM")
+				sql = query_parts[0] + (", ROW_NUMBER() OVER (%s) AS RowNum FROM " % order_column) + query_parts[1]
+
+				sql = """;WITH Results AS
+				(
+					%s
+				)
+				SELECT *
+				FROM Results
+				WHERE RowNum >= %s
+				AND RowNum <= %s
+				""" % (sql,offset,int(offset)+int(limit))
+                                # Now we should have a big dual query along the lines of http://stackoverflow.com/questions/2135418/equivalent-of-limit-and-offset-for-sql-server
+
 		else:
 			for match in reversed([match for match in re_select.finditer(sql) if match.group(2) == None]):
-				sql = sql[:match.end()] + ' TOP 1000' + sql[match.end():]
+				sql = sql[:match.end()] + ' TOP 100000000' + sql[match.end():]
 		try:
 			if self.log:  # See [trac] debug_sql in trac.ini
 				self.log.debug(sql)
